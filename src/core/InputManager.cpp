@@ -61,6 +61,7 @@ void InputManager::MouseCallbackThunk(GLFWwindow* window, double xpos, double yp
 }
 
 void InputManager::ScrollCallbackThunk(GLFWwindow* window, double xoffset, double yoffset) {
+    (void)xoffset;
     if (auto* instance = static_cast<InputManager*>(glfwGetWindowUserPointer(window))) {
         instance->HandleScroll(yoffset);
     }

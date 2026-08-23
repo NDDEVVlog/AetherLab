@@ -42,6 +42,7 @@ struct Material {
         }
         shader.setVec3("material.baseAlbedo", baseAlbedo);
         shader.setVec3("material.baseSpecular", baseSpecular);
+        shader.setVec3("material.baseAmbient", baseAmbient);
         shader.setFloat("material.shininess", shininess);
     }
 };

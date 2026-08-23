@@ -6,11 +6,11 @@
 class Texture {
 public:
     unsigned int ID = 0;
-    std::string Type;
+    std::string type;
 
     bool load(const std::string& path, const std::string& typeName, bool flipVertically = true)
     {
-        Type = typeName;
+        type = typeName;
         stbi_set_flip_vertically_on_load(flipVertically);
 
         int width, height, channels;
@@ -42,5 +42,10 @@ public:
     {
         glActiveTexture(GL_TEXTURE0 + unit);
         glBindTexture(GL_TEXTURE_2D, ID);
+    }
+
+    void Delete() const
+    {
+        glDeleteTextures(1, &ID);
     }
 };

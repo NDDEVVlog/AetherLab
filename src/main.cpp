@@ -3,6 +3,8 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <cstddef>
+#include <vector>
 
 #include "renderer/Shader.h"
 #include "renderer/Texture.h"
@@ -15,8 +17,13 @@
 
 const unsigned int SCR_WIDTH = 800;
 const unsigned int SCR_HEIGHT = 600;
+int framebufferWidth = SCR_WIDTH;
+int framebufferHeight = SCR_HEIGHT;
 
 void FramebufferSizeCallback(GLFWwindow* window, int width, int height) {
+    (void)window;
+    framebufferWidth = width;
+    framebufferHeight = height;
     glViewport(0, 0, width, height);
 }
 
@@ -44,7 +51,10 @@ int main() {
     Shader lightShader("shaders/light.vert", "shaders/light.frag");
     
     Texture texture;
-    texture.load("assets/textures/ThaoVy2.jpg", "texture_albedo");
+    if (!texture.load("assets/textures/ThaoVy2.jpg", "material.albedoMap")) {
+        glfwTerminate();
+        return -1;
+    }
 
     float vertices[] = {
         -0.5f, -0.5f, -0.5f,  0.0f, 0.0f,  0.0f,  0.0f, -1.0f,
@@ -93,11 +103,23 @@ int main() {
 
     VAO vao;
     vao.Bind();
-    VBO vbo(vertices, sizeof(vertices));
-    int stride = 8 * sizeof(float);
-    vao.LinkAttribute(vbo, 0, 3, GL_FLOAT, stride, (void*)0);
-    vao.LinkAttribute(vbo, 1, 2, GL_FLOAT, stride, (void*)(3 * sizeof(float)));
-    vao.LinkAttribute(vbo, 2, 3, GL_FLOAT, stride, (void*)(5 * sizeof(float)));
+    std::vector<Vertex> cubeVertices;
+    cubeVertices.reserve(36);
+    for (std::size_t i = 0; i < 36; ++i) {
+        const float* vertex = &vertices[i * 8];
+        cubeVertices.push_back({
+            glm::vec3(vertex[0], vertex[1], vertex[2]),
+            glm::vec2(vertex[3], vertex[4]),
+            glm::vec3(vertex[5], vertex[6], vertex[7]),
+            glm::vec3(1.0f)
+        });
+    }
+
+    VBO vbo(cubeVertices);
+    const GLsizei stride = sizeof(Vertex);
+    vao.LinkAttribute(vbo, 0, 3, GL_FLOAT, stride, (void*)offsetof(Vertex, position));
+    vao.LinkAttribute(vbo, 1, 2, GL_FLOAT, stride, (void*)offsetof(Vertex, texUV));
+    vao.LinkAttribute(vbo, 2, 3, GL_FLOAT, stride, (void*)offsetof(Vertex, normal));
     vao.Unbind();
     vbo.Unbind();
 
@@ -159,7 +181,10 @@ int main() {
         lightManager.additionalLights[1].direction = camera.Front;
         lightManager.ApplyToShader(shader);
 
-        glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
+        float aspectRatio = framebufferHeight > 0
+            ? static_cast<float>(framebufferWidth) / static_cast<float>(framebufferHeight)
+            : static_cast<float>(SCR_WIDTH) / static_cast<float>(SCR_HEIGHT);
+        glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), aspectRatio, 0.1f, 100.0f);
         glm::mat4 view = camera.GetViewMatrix();
         shader.setMat4("projection", glm::value_ptr(projection));
         shader.setMat4("view", glm::value_ptr(view));
@@ -182,6 +207,7 @@ int main() {
 
     vao.Delete();
     vbo.Delete();
+    texture.Delete();
     glfwTerminate();
     return 0;
 }
