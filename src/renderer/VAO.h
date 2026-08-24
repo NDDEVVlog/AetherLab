@@ -25,16 +25,16 @@ public:
 
     }
 
-	void Bind() 
+	void Bind() const
     {
         glBindVertexArray(ID);
     }
 
-	void Unbind()
+	void Unbind() const
     {
         glBindVertexArray(0);
     }
-    void Delete()
+    void Delete() const
     {
         glDeleteVertexArrays(1, &ID);
     }

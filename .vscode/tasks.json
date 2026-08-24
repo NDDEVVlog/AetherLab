@@ -12,15 +12,21 @@
                 "${workspaceFolder}/src/glad.c",
                 "-I${workspaceFolder}/include",
                 "-I${workspaceFolder}/src",
+                "-I${workspaceFolder}/vcpkg/installed/x64-mingw-dynamic/include",
                 "-L${workspaceFolder}/lib",
+                "-L${workspaceFolder}/vcpkg/installed/x64-mingw-dynamic/lib",
                 "-lglfw3dll",
+                "-lassimp",
                 "-lopengl32",
                 "-lgdi32",
                 "-o",
                 "${workspaceFolder}/main.exe"
             ],
             "options": {
-                "cwd": "${workspaceFolder}"
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "PATH": "${workspaceFolder}/vcpkg/installed/x64-mingw-dynamic/bin;${env:PATH}"
+                }
             },
             "problemMatcher": [
                 "$gcc"

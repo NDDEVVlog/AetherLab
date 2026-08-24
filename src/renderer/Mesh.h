@@ -1,78 +1,65 @@
-
 #pragma once
 #include <string>
-#include <glm/gtc/type_ptr.hpp>
-
 #include <vector>
-#include"VAO.h"
-#include"EBO.h"
-#include"Camera.h"
-#include"Texture.h"
-#include"Shader.h"
+#include "VAO.h"
+#include "VBO.h"
+#include "EBO.h"
+#include "Texture.h"
+#include "Shader.h"
 
-class Mesh
-{
+class Mesh {
 public:
-	std::vector <Vertex> vertices;
-	std::vector <GLuint> indices;
-	std::vector <Texture> textures;
-	// Store VAO in public so it can be used in the Draw function
-	VAO VAO;
+    std::vector<Vertex> vertices;
+    std::vector<GLuint> indices;
+    std::vector<Texture> textures;
+    VAO vao;
 
-	// Initializes the mesh
-    Mesh(const std::vector<Vertex>& vertices, const std::vector<GLuint>& indices, const std::vector<Texture>& textures){
-        
-        Mesh::vertices = vertices;
-        Mesh::indices = indices;
-        Mesh::textures = textures;
+    Mesh(const std::vector<Vertex>& vertices, const std::vector<GLuint>& indices, const std::vector<Texture>& textures) {
+        this->vertices = vertices;
+        this->indices = indices;
+        this->textures = textures;
 
-        VAO.Bind();
-        // Generates Vertex Buffer Object and links it to vertices
-        VBO VBO(vertices);
-        // Generates Element Buffer Object and links it to indices
-        EBO EBO(indices);
-        // Links VBO attributes such as coordinates and colors to VAO
-        VAO.LinkAttribute(VBO, 0, 3, GL_FLOAT, sizeof(Vertex), (void*)0);
-        VAO.LinkAttribute(VBO, 1, 2, GL_FLOAT, sizeof(Vertex), (void*)(3 * sizeof(float)));
-        VAO.LinkAttribute(VBO, 2, 3, GL_FLOAT, sizeof(Vertex), (void*)(5 * sizeof(float)));
-        VAO.LinkAttribute(VBO, 3, 3, GL_FLOAT, sizeof(Vertex), (void*)(8 * sizeof(float)));
-        // Unbind all to prevent accidentally modifying them
-        VAO.Unbind();
-        VBO.Unbind();
-        EBO.Unbind();
-        }
+        setupMesh();
+    }
 
-        // Draws the mesh
-        void Draw(Shader& shader, Camera& camera){
-        // Bind shader to be able to access uniforms
-        shader.use();
-        VAO.Bind();
+    void Draw(const Shader& shader) const {
+        shader.setBool("material.hasAlbedoMap", false);
+        shader.setBool("material.hasSpecularMap", false);
+        shader.setBool("material.hasNormalMap", false);
 
-        // Keep track of how many of each type of textures we have
-        unsigned int numDiffuse = 0;
-        unsigned int numSpecular = 0;
-
-        for (unsigned int i = 0; i < textures.size(); i++)
-        {
-            std::string num;
-            std::string type = textures[i].type;
-            if (type == "diffuse")
-            {
-                num = std::to_string(numDiffuse++);
-            }
-            else if (type == "specular")
-            {
-                num = std::to_string(numSpecular++);
-            }
-            shader.setInt(type + num, static_cast<int>(i));
+        for (unsigned int i = 0; i < textures.size(); i++) {
             textures[i].bind(i);
+            if (textures[i].type == "texture_diffuse") {
+                shader.setInt("material.albedoMap", i);
+                shader.setBool("material.hasAlbedoMap", true);
+            } else if (textures[i].type == "texture_specular") {
+                shader.setInt("material.specularMap", i);
+                shader.setBool("material.hasSpecularMap", true);
+            } else if (textures[i].type == "texture_normal") {
+                shader.setInt("material.normalMap", i);
+                shader.setBool("material.hasNormalMap", true);
+            }
         }
-            // Take care of the camera Matrix
-            shader.setVec3("u_CameraPositionWS", camera.Position);
-            glm::mat4 view = camera.GetViewMatrix();
-            shader.setMat4("view", glm::value_ptr(view));
 
-            // Draw the actual mesh
-            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, nullptr);
+        vao.Bind();
+        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, nullptr);
+        vao.Unbind();
+    }
+
+private:
+    void setupMesh() {
+        vao.Bind();
+        VBO vbo(vertices);
+        EBO ebo(indices);
+
+        const GLsizei stride = sizeof(Vertex);
+        vao.LinkAttribute(vbo, 0, 3, GL_FLOAT, stride, (void*)offsetof(Vertex, position));
+        vao.LinkAttribute(vbo, 1, 2, GL_FLOAT, stride, (void*)offsetof(Vertex, texUV));
+        vao.LinkAttribute(vbo, 2, 3, GL_FLOAT, stride, (void*)offsetof(Vertex, normal));
+        vao.LinkAttribute(vbo, 3, 3, GL_FLOAT, stride, (void*)offsetof(Vertex, color));
+
+        vao.Unbind();
+        vbo.Unbind();
+        ebo.Unbind();
     }
 };

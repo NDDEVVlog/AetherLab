@@ -2,21 +2,24 @@
 #include <glad/glad.h>
 #include <stb/stb_image.h>
 #include <string>
+#include <iostream>
 
 class Texture {
 public:
     unsigned int ID = 0;
     std::string type;
+    std::string path;
 
-    bool load(const std::string& path, const std::string& typeName, bool flipVertically = true)
-    {
+    bool load(const std::string& filePath, const std::string& typeName, bool flipVertically = true) {
+        path = filePath;
         type = typeName;
         stbi_set_flip_vertically_on_load(flipVertically);
 
         int width, height, channels;
-        unsigned char* data = stbi_load(path.c_str(), &width, &height, &channels, 0);
+        unsigned char* data = stbi_load(filePath.c_str(), &width, &height, &channels, 0);
         
         if (!data) {
+            std::cerr << "Failed to load texture: " << filePath << std::endl;
             return false;
         }
 
@@ -38,14 +41,12 @@ public:
         return true;
     }
 
-    void bind(unsigned int unit = 0) const
-    {
+    void bind(unsigned int unit = 0) const {
         glActiveTexture(GL_TEXTURE0 + unit);
         glBindTexture(GL_TEXTURE_2D, ID);
     }
 
-    void Delete() const
-    {
+    void Delete() const {
         glDeleteTextures(1, &ID);
     }
 };
