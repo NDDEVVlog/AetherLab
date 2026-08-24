@@ -4,6 +4,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <vector>
+#include <memory>
 
 #include "renderer/Shader.h"
 #include "renderer/Model.h"
@@ -11,6 +12,12 @@
 #include "renderer/Camera.h"
 #include "Struct/Material.h"
 #include "Struct/Light.h"
+
+#include "core/Entity.h"
+#include "components/MeshRenderer.h"
+#include "components/RotateAround.h"
+#include "components/LightComponent.h"
+#include "components/CameraFollow.h"
 
 const unsigned int SCR_WIDTH = 1280;
 const unsigned int SCR_HEIGHT = 720;
@@ -46,13 +53,15 @@ int main() {
     glEnable(GL_CULL_FACE);
 
     Shader shader("shaders/cube.vert", "shaders/cube.frag");
-    
-    // Đảm bảo đường dẫn tới file model của bạn là chính xác
     Model myModel("assets/Corset.fbx");
-
     Camera camera(glm::vec3(0.0f, 0.0f, 5.0f));
     InputManager inputManager(window);
+    LightManager lightManager;
     
+    lightManager.mainLight.direction = glm::vec3(-0.2f, -1.0f, -0.3f);
+    lightManager.mainLight.color = glm::vec3(0.5f, 0.5f, 0.5f);
+    lightManager.ambientColor = glm::vec3(0.1f, 0.1f, 0.1f);
+
     float deltaTime = 0.0f, lastFrame = 0.0f;
 
     inputManager.SubscribePress(GLFW_KEY_ESCAPE, [&]() { glfwSetWindowShouldClose(window, true); });
@@ -64,17 +73,29 @@ int main() {
     inputManager.SubscribeHold(GLFW_KEY_E, [&]() { camera.ProcessKeyboard(CameraMovement::DOWN, deltaTime); });
     inputManager.SubscribeMouseMove([&](float xoffset, float yoffset) { camera.ProcessMouseMovement(xoffset, yoffset); });
 
-    LightManager lightManager;
-    lightManager.mainLight.direction = glm::vec3(-0.2f, -1.0f, -0.3f);
-    lightManager.mainLight.color = glm::vec3(1.0f, 1.0f, 1.0f);
-    lightManager.ambientColor = glm::vec3(0.2f, 0.2f, 0.2f);
-    
-    AdditionalLight pointLight;
-    pointLight.type = LightType::Point;
-    pointLight.position = glm::vec3(0.0f, 2.0f, 2.0f);
-    pointLight.color = glm::vec3(1.0f, 0.5f, 0.2f);
-    pointLight.constant = 1.0f; pointLight.linear = 0.09f; pointLight.quadratic = 0.032f;
-    lightManager.additionalLights.push_back(pointLight);
+    std::vector<std::unique_ptr<Entity>> scene;
+
+    auto corsetEntity = std::make_unique<Entity>("Corset");
+    corsetEntity->AddComponent<Transform>()->position = glm::vec3(0.0f, 0.0f, 0.0f);
+    corsetEntity->AddComponent<MeshRenderer>(&myModel);
+    scene.push_back(std::move(corsetEntity));
+
+    auto staticLightEntity = std::make_unique<Entity>("StaticLight");
+    staticLightEntity->AddComponent<Transform>()->position = glm::vec3(0.0f, 2.0f, 2.0f);
+    staticLightEntity->AddComponent<LightComponent>(LightType::Point, glm::vec3(1.0f, 0.5f, 0.2f));
+    scene.push_back(std::move(staticLightEntity));
+
+    auto rotatingLightEntity = std::make_unique<Entity>("RotatingLight");
+    rotatingLightEntity->AddComponent<Transform>()->position = glm::vec3(4.0f, 1.0f, 0.0f); 
+    rotatingLightEntity->AddComponent<RotateAround>(glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), 90.0f);
+    rotatingLightEntity->AddComponent<LightComponent>(LightType::Point, glm::vec3(0.2f, 0.5f, 1.0f));
+    scene.push_back(std::move(rotatingLightEntity));
+
+    auto flashLightEntity = std::make_unique<Entity>("FlashLight");
+    flashLightEntity->AddComponent<Transform>();
+    flashLightEntity->AddComponent<CameraFollow>(&camera);
+    flashLightEntity->AddComponent<LightComponent>(LightType::Spot, glm::vec3(1.0f, 1.0f, 1.0f));
+    scene.push_back(std::move(flashLightEntity));
 
     while (!glfwWindowShouldClose(window)) {
         float currentFrame = static_cast<float>(glfwGetTime());
@@ -83,17 +104,24 @@ int main() {
 
         inputManager.Update();
 
+        std::vector<AdditionalLight> activeLights;
+        for (auto& entity : scene) {
+            entity->Update(deltaTime);
+            if (auto lightComp = entity->GetComponent<LightComponent>()) {
+                activeLights.push_back(lightComp->GenerateLightData());
+            }
+        }
+
         glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         shader.use();
-        
         shader.setVec3("u_CameraPositionWS", camera.Position);
         shader.setFloat("material.shininess", 32.0f); 
         shader.setVec3("material.baseAlbedo", glm::vec3(1.0f));
         shader.setVec3("material.baseSpecular", glm::vec3(0.5f));
 
-        lightManager.ApplyToShader(shader);
+        lightManager.ApplyToShader(shader, activeLights);
 
         float aspectRatio = framebufferHeight > 0
             ? static_cast<float>(framebufferWidth) / static_cast<float>(framebufferHeight)
@@ -105,15 +133,19 @@ int main() {
         shader.setMat4("projection", glm::value_ptr(projection));
         shader.setMat4("view", glm::value_ptr(view));
         
-        glm::mat4 model = glm::mat4(1.0f);
-        model = glm::translate(model, glm::vec3(0.0f, 0.0f, 0.0f));
-        model = glm::scale(model, glm::vec3(1.0f, 1.0f, 1.0f));
-        glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(model)));
-        
-        shader.setMat4("model", glm::value_ptr(model));
-        shader.setMat3("normalMatrix", glm::value_ptr(normalMatrix));
-
-        myModel.Draw(shader);
+        for (const auto& entity : scene) {
+            if (auto renderer = entity->GetComponent<MeshRenderer>()) {
+                if (renderer->model) {
+                    glm::mat4 modelMatrix = entity->GetComponent<Transform>()->GetModelMatrix();
+                    glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(modelMatrix)));
+                    
+                    shader.setMat4("model", glm::value_ptr(modelMatrix));
+                    shader.setMat3("normalMatrix", glm::value_ptr(normalMatrix));
+                    
+                    renderer->model->Draw(shader);
+                }
+            }
+        }
 
         glfwSwapBuffers(window);
         glfwPollEvents();

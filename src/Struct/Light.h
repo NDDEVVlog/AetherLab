@@ -2,6 +2,7 @@
 #include <glm/glm.hpp>
 #include <string>
 #include <vector>
+#include <algorithm>
 #include "renderer/Shader.h"
 
 enum class LightType {
@@ -10,8 +11,8 @@ enum class LightType {
 };
 
 struct MainLight {
-    glm::vec3 direction = glm::vec3(0.0f, -1.0f, 0.0f);
-    glm::vec3 color = glm::vec3(1.0f);
+    glm::vec3 direction{0.0f, -1.0f, 0.0f};
+    glm::vec3 color{1.0f};
 
     void ApplyToShader(const Shader& shader) const {
         shader.setVec3("mainLight.direction", direction);
@@ -20,15 +21,15 @@ struct MainLight {
 };
 
 struct AdditionalLight {
-    LightType type;
-    glm::vec3 position;
-    glm::vec3 direction;
-    glm::vec3 color;
-    float constant;
-    float linear;
-    float quadratic;
-    float cutOff;
-    float outerCutOff;
+    LightType type{LightType::Point};
+    glm::vec3 position{0.0f};
+    glm::vec3 direction{0.0f, 0.0f, -1.0f};
+    glm::vec3 color{1.0f};
+    float constant{1.0f};
+    float linear{0.09f};
+    float quadratic{0.032f};
+    float cutOff{glm::cos(glm::radians(12.5f))};
+    float outerCutOff{glm::cos(glm::radians(15.0f))};
 
     void ApplyToShader(const Shader& shader, int index) const {
         std::string base = "u_AdditionalLights[" + std::to_string(index) + "]";
@@ -47,10 +48,9 @@ struct AdditionalLight {
 class LightManager {
 public:
     MainLight mainLight;
-    std::vector<AdditionalLight> additionalLights;
-    glm::vec3 ambientColor = glm::vec3(0.1f);
+    glm::vec3 ambientColor{0.1f};
 
-    void ApplyToShader(const Shader& shader) const {
+    void ApplyToShader(const Shader& shader, const std::vector<AdditionalLight>& additionalLights) const {
         mainLight.ApplyToShader(shader);
         shader.setVec3("u_AmbientColor", ambientColor);
         
