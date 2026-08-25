@@ -1,5 +1,6 @@
 #pragma once
 #include <iostream>
+#include <filesystem>
 #include <string>
 #include <vector>
 #include <assimp/Importer.hpp>
@@ -19,10 +20,28 @@ public:
         }
     }
 
+    void AddTexture(const Texture& text) {
+        texturesLoaded.push_back(text);
+    }
+
 private:
     std::vector<Mesh> meshes;
     std::string directory;
     std::vector<Texture> texturesLoaded;
+
+    std::string resolveTexturePath(const std::string& textureReference) const {
+        const std::filesystem::path reference(textureReference);
+        std::error_code error;
+
+        if (reference.is_absolute() && std::filesystem::exists(reference, error)) {
+            return reference.lexically_normal().string();
+        }
+
+        const std::filesystem::path relativePath = reference.is_absolute()
+            ? reference.filename()
+            : reference;
+        return (std::filesystem::path(directory) / relativePath).lexically_normal().string();
+    }
 
     void loadModel(const std::string& path) {
         Assimp::Importer importer;
@@ -89,10 +108,11 @@ private:
         for (unsigned int i = 0; i < mat->GetTextureCount(type); i++) {
             aiString str;
             mat->GetTexture(type, i, &str);
+            const std::string texturePath = resolveTexturePath(str.C_Str());
             bool skip = false;
             
             for (const auto& tex : texturesLoaded) {
-                if (tex.path == directory + "/" + str.C_Str()) {
+                if (tex.path == texturePath) {
                     textures.push_back(tex);
                     skip = true;
                     break;
@@ -101,7 +121,7 @@ private:
 
             if (!skip) {
                 Texture texture;
-                if (texture.load(directory + "/" + str.C_Str(), typeName, false)) {
+                if (texture.load(texturePath, typeName, false)) {
                     textures.push_back(texture);
                     texturesLoaded.push_back(texture);
                 }

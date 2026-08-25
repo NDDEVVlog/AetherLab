@@ -3,11 +3,14 @@
 #include <memory>
 #include <string>
 #include <type_traits>
+#include <typeindex>
+#include <unordered_map>
 #include "Component.h"
 
 class Entity {
 private:
-    std::vector<std::unique_ptr<Component>> components;
+    std::unordered_map<std::type_index, std::unique_ptr<Component>> componentMap;
+    std::vector<Component*> updateList;
     bool isActive = true;
 
 public:
@@ -17,15 +20,14 @@ public:
 
     template <typename T, typename... TArgs>
     T* AddComponent(TArgs&&... mArgs) {
-        static_assert(std::is_base_of<Component, T>::value, "T must inherit from Component");
-        //Create another component on the HEAP
+        static_assert(std::is_base_of<Component, T>::value);
+        
         auto newComponent = std::make_unique<T>(std::forward<TArgs>(mArgs)...);
-
         newComponent->owner = this;
-        T* rawPtr = newComponent.get(); //get pointer of the new component 
+        T* rawPtr = newComponent.get(); 
 
-        //store the component
-        components.push_back(std::move(newComponent));
+        componentMap[std::type_index(typeid(T))] = std::move(newComponent);
+        updateList.push_back(rawPtr);
         
         rawPtr->Awake();
         return rawPtr;
@@ -33,18 +35,31 @@ public:
 
     template <typename T>
     T* GetComponent() const {
-        for (const auto& component : components) {
-            if (T* cmp = dynamic_cast<T*>(component.get())) {
-                return cmp;
-            }
+        auto it = componentMap.find(std::type_index(typeid(T)));
+        if (it != componentMap.end()) {
+            return static_cast<T*>(it->second.get());
         }
         return nullptr;
     }
 
+    template <typename T>
+    std::vector<T*> GetComponents() const {
+        std::vector<T*> result;
+        for (auto* component : updateList) {
+            if (T* casted = dynamic_cast<T*>(component)) {
+                result.push_back(casted);
+            }
+        }
+        return result;
+    }
+
     void Update(float deltaTime) {
         if (!isActive) return;
-        for (auto& component : components) {
+        for (auto* component : updateList) {
             component->Update(deltaTime);
         }
     }
+    
+    bool IsActive() const { return isActive; }
+    void SetActive(bool state) { isActive = state; }
 };

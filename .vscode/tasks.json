@@ -7,11 +7,14 @@
             "command": "g++",
             "args": [
                 "-g",
+                "-std=c++17",
                 "${workspaceFolder}/src/*.cpp",
                 "${workspaceFolder}/src/core/*.cpp",
+                "${workspaceFolder}/src/imgui/*.cpp",
                 "${workspaceFolder}/src/glad.c",
                 "-I${workspaceFolder}/include",
                 "-I${workspaceFolder}/src",
+                "-I${workspaceFolder}/src/imgui",
                 "-I${workspaceFolder}/vcpkg/installed/x64-mingw-dynamic/include",
                 "-L${workspaceFolder}/lib",
                 "-L${workspaceFolder}/vcpkg/installed/x64-mingw-dynamic/lib",
@@ -19,6 +22,7 @@
                 "-lassimp",
                 "-lopengl32",
                 "-lgdi32",
+                "-limm32",
                 "-o",
                 "${workspaceFolder}/main.exe"
             ],
@@ -35,7 +39,7 @@
                 "kind": "build",
                 "isDefault": true
             },
-            "detail": "Compiler task for full OpenGL Project"
+            "detail": "Compiler task for full OpenGL Project with ImGui"
         }
     ]
 }
