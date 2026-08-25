@@ -7,8 +7,10 @@ out vec4 FragColor;
 in vec3 FragPos;  
 in vec3 Normal;  
 in vec2 vTexCoord;
+in vec4 FragPosLightSpace;
 
 uniform Material material;
+uniform sampler2D shadowMap;
 
 vec3 GetPerturbedNormal(vec3 fragPos, vec2 texCoord, vec3 vertexNormal) {
     if (!material.hasNormalMap) {
@@ -29,6 +31,28 @@ vec3 GetPerturbedNormal(vec3 fragPos, vec2 texCoord, vec3 vertexNormal) {
     mat3 tbn = mat3(t, b, ng);
     
     return normalize(tbn * nMap);
+}
+
+float CalculateShadow(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir) {
+    vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
+    projCoords = projCoords * 0.5 + 0.5;
+    
+    if(projCoords.z > 1.0) {
+        return 0.0;
+    }
+    
+    float currentDepth = projCoords.z;
+    float bias = max(0.005 * (1.0 - dot(normal, lightDir)), 0.0005);
+    float shadow = 0.0;
+    vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
+    
+    for(int x = -1; x <= 1; ++x) {
+        for(int y = -1; y <= 1; ++y) {
+            float pcfDepth = texture(shadowMap, projCoords.xy + vec2(x, y) * texelSize).r; 
+            shadow += currentDepth - bias > pcfDepth ? 1.0 : 0.0;        
+        }    
+    }
+    return shadow / 9.0;
 }
 
 vec3 CalculateLightContribution(URPLight light, vec3 normal, vec3 viewDir, vec3 albedo, vec3 specMap) {
@@ -55,6 +79,10 @@ void main()
     vec3 result = u_AmbientColor * albedo;
 
     URPLight mainLgt = GetMainLight();
+    if (mainLight.castShadows) {
+        mainLgt.shadowAttenuation = 1.0 - CalculateShadow(FragPosLightSpace, norm, mainLgt.direction);
+    }
+    
     result += CalculateLightContribution(mainLgt, norm, viewDir, albedo, specMap);
 
     int lightCount = GetAdditionalLightsCount();

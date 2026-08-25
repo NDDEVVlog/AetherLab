@@ -13,10 +13,14 @@ enum class LightType {
 struct MainLight {
     glm::vec3 direction{0.0f, -1.0f, 0.0f};
     glm::vec3 color{1.0f};
+    float intensity{1.0f};
+    bool castShadows{true};
 
     void ApplyToShader(const Shader& shader) const {
         shader.setVec3("mainLight.direction", direction);
         shader.setVec3("mainLight.color", color);
+        shader.setFloat("mainLight.intensity", intensity);
+        shader.setBool("mainLight.castShadows", castShadows);
     }
 };
 

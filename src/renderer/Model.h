@@ -22,6 +22,9 @@ public:
 
     void AddTexture(const Texture& text) {
         texturesLoaded.push_back(text);
+        for (auto& mesh : meshes) {
+            mesh.textures.push_back(text);
+        }
     }
 
 private:

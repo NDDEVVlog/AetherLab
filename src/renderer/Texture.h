@@ -42,7 +42,7 @@ public:
     }
 
     void bind(unsigned int unit = 0) const {
-        glActiveTexture(GL_TEXTURE0 + unit);
+        glActiveTexture(GL_TEXTURE0 + unit); //Store at GL_Texture0 1 2 3 ...
         glBindTexture(GL_TEXTURE_2D, ID);
     }
 

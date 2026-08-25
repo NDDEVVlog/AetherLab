@@ -27,6 +27,9 @@
 
 const unsigned int SCR_WIDTH = 1280;
 const unsigned int SCR_HEIGHT = 720;
+const unsigned int SHADOW_WIDTH = 2048;
+const unsigned int SHADOW_HEIGHT = 2048;
+
 int framebufferWidth = SCR_WIDTH;
 int framebufferHeight = SCR_HEIGHT;
 
@@ -57,8 +60,6 @@ GLFWwindow* InitializeWindow() {
 
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
-    glCullFace(GL_BACK);  
-    glFrontFace(GL_CCW);
     return window;
 }
 
@@ -84,7 +85,38 @@ void SetupInput(InputManager& inputManager, GLFWwindow* window, Camera& camera, 
     });
 }
 
-void RenderScene(Shader& shader, Camera& camera, LightManager& lightManager, const std::vector<std::unique_ptr<Entity>>& scene, const std::vector<AdditionalLight>& activeLights) {
+glm::mat4 CalculateLightSpaceMatrix(const MainLight& light) {
+    glm::vec3 lightPos = -glm::normalize(light.direction) * 20.0f;
+    glm::mat4 lightProjection = glm::ortho(-15.0f, 15.0f, -15.0f, 15.0f, 1.0f, 50.0f);
+    glm::mat4 lightView = glm::lookAt(lightPos, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    return lightProjection * lightView;
+}
+
+void RenderShadowPass(const Shader& shadowShader, const FBO& shadowFBO, const std::vector<std::unique_ptr<Entity>>& scene, const glm::mat4& lightSpaceMatrix) {
+    shadowFBO.Bind();
+    glViewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
+    glClear(GL_DEPTH_BUFFER_BIT);
+    glCullFace(GL_FRONT);
+
+    shadowShader.use();
+    shadowShader.setMat4("lightSpaceMatrix", glm::value_ptr(lightSpaceMatrix));
+
+    for (const auto& entity : scene) {
+        if (!entity->IsActive()) continue;
+        auto renderer = entity->GetComponent<MeshRenderer>();
+        auto transform = entity->GetComponent<Transform>();
+        
+        if (renderer && renderer->model && transform) {
+            shadowShader.setMat4("model", glm::value_ptr(transform->GetModelMatrix()));
+            renderer->model->Draw(shadowShader);
+        }
+    }
+
+    glCullFace(GL_BACK);
+    shadowFBO.Unbind();
+}
+
+void RenderScene(Shader& shader, Camera& camera, LightManager& lightManager, const std::vector<std::unique_ptr<Entity>>& scene, const std::vector<AdditionalLight>& activeLights, const glm::mat4& lightSpaceMatrix, unsigned int shadowMapID) {
     glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -93,6 +125,11 @@ void RenderScene(Shader& shader, Camera& camera, LightManager& lightManager, con
     shader.setFloat("material.shininess", 32.0f); 
     shader.setVec3("material.baseAlbedo", glm::vec3(1.0f));
     shader.setVec3("material.baseSpecular", glm::vec3(0.5f));
+    shader.setMat4("lightSpaceMatrix", glm::value_ptr(lightSpaceMatrix));
+
+    glActiveTexture(GL_TEXTURE10);
+    glBindTexture(GL_TEXTURE_2D, shadowMapID);
+    shader.setInt("shadowMap", 10);
 
     lightManager.ApplyToShader(shader, activeLights);
 
@@ -136,6 +173,8 @@ void RenderUI(ImGuiManager& uiManager, LightManager& lightManager, const std::ve
             ImGui::ColorEdit3("Ambient Color", glm::value_ptr(lightManager.ambientColor));
             ImGui::ColorEdit3("Main Light Color", glm::value_ptr(lightManager.mainLight.color));
             ImGui::SliderFloat3("Main Light Dir", glm::value_ptr(lightManager.mainLight.direction), -1.0f, 1.0f);
+            ImGui::SliderFloat("Main Light Intensity", &lightManager.mainLight.intensity, 0.0f, 5.0f);
+            ImGui::Checkbox("Cast Shadows", &lightManager.mainLight.castShadows);
         }
         
         if (ImGui::CollapsingHeader("Entities")) {
@@ -145,7 +184,6 @@ void RenderUI(ImGuiManager& uiManager, LightManager& lightManager, const std::ve
                     for (auto* editorGUI : editorComps) {
                         editorGUI->UpdateEditor();
                     }
-
                     ImGui::TreePop();
                 }
             }
@@ -164,17 +202,14 @@ int main() {
 
     Shader shader("shaders/cube.vert", "shaders/cube.frag");
     Shader skyBoxShader("shaders/skybox.vert","shaders/skybox.frag");
+    Shader shadowShader("shaders/shadow.vert", "shaders/shadow.frag");
+    Shader screenShader("shaders/screen.vert", "shaders/screen.frag");
 
-
-    std::string skyBoxPath= "assets/SkyBox/";
+    std::string skyBoxPath = "assets/SkyBox/";
     Skybox skyBox(std::vector<std::string>{
-        skyBoxPath+"right.jpg",
-        skyBoxPath+"left.jpg",
-        skyBoxPath+"top.jpg",
-        skyBoxPath+"bottom.jpg",
-        skyBoxPath+"front.jpg",
-        skyBoxPath+"back.jpg",
-
+        skyBoxPath + "right.jpg", skyBoxPath + "left.jpg",
+        skyBoxPath + "top.jpg", skyBoxPath + "bottom.jpg",
+        skyBoxPath + "front.jpg", skyBoxPath + "back.jpg"
     });
 
     Model myModel("assets/Corset.fbx");
@@ -182,24 +217,28 @@ int main() {
     myTexture.load("assets/Models/Kenku/ColorNeat.png", "texture_diffuse", false);
     myModel.AddTexture(myTexture);
 
+    Model planeModel("assets/Models/Plane.fbx");
+    Texture planeColor;
+    planeColor.load("assets/textures/Tile138/Tiles138_1K-JPG_Color.jpg", "texture_diffuse", false);
+    planeModel.AddTexture(planeColor);
+    Texture planeNormal;
+    planeNormal.load("assets/textures/Tile138/Tiles138_1K-JPG_NormalGL.jpg", "texture_normal", false);
+    planeModel.AddTexture(planeNormal);
 
+    FBO shadowFBO(SHADOW_WIDTH, SHADOW_HEIGHT);
+    shadowFBO.AttachDepthTexture();
+    
     FBO myFBO(SCR_WIDTH, SCR_HEIGHT);
     myFBO.AttachColorTexture();
     myFBO.AttachDepthRenderBuffer();
-    if (!myFBO.CheckStatus()) {
-        std::cerr << "Failed to initialize FBO" << std::endl;
-    }
 
-    Shader screenShader("shaders/screen.vert", "shaders/screen.frag");
     screenShader.use();
     screenShader.setInt("screenTexture", 0);
-
 
     float quadVertices[] = { 
         -1.0f,  1.0f,  0.0f, 1.0f,
         -1.0f, -1.0f,  0.0f, 0.0f,
          1.0f, -1.0f,  1.0f, 0.0f,
-
         -1.0f,  1.0f,  0.0f, 1.0f,
          1.0f, -1.0f,  1.0f, 0.0f,
          1.0f,  1.0f,  1.0f, 1.0f
@@ -223,10 +262,8 @@ int main() {
     LightManager lightManager;
     
     lightManager.mainLight.direction = glm::vec3(-0.2f, -1.0f, -0.3f);
-    lightManager.mainLight.color = glm::vec3(0.5f, 0.5f, 0.5f);
+    lightManager.mainLight.color = glm::vec3(1.0f, 1.0f, 1.0f);
     lightManager.ambientColor = glm::vec3(0.1f, 0.1f, 0.1f);
-
-    
 
     float deltaTime = 0.0f, lastFrame = 0.0f;
     bool isUIActive = false;
@@ -240,6 +277,14 @@ int main() {
     corsetEntity->AddComponent<MeshRenderer>(&myModel);
     scene.push_back(std::move(corsetEntity));
 
+    auto planeEntity = std::make_unique<Entity>("Plane");
+    auto planeTransform = planeEntity->AddComponent<Transform>();
+    planeTransform->position = glm::vec3(0.0f, -1.0f, 0.0f);
+    planeTransform->rotation = glm::vec3(-90.0f, 0.0f, 0.0f);
+    planeTransform->scale = glm::vec3(10.0f);
+    planeEntity->AddComponent<MeshRenderer>(&planeModel);
+    scene.push_back(std::move(planeEntity));
+
     auto staticLightEntity = std::make_unique<Entity>("StaticLight");
     staticLightEntity->AddComponent<Transform>()->position = glm::vec3(0.0f, 2.0f, 2.0f);
     staticLightEntity->AddComponent<LightComponent>(LightType::Point, glm::vec3(1.0f, 0.5f, 0.2f));
@@ -251,16 +296,8 @@ int main() {
     rotatingLightEntity->AddComponent<LightComponent>(LightType::Point, glm::vec3(0.2f, 0.5f, 1.0f));
     scene.push_back(std::move(rotatingLightEntity));
 
-    auto flashLightEntity = std::make_unique<Entity>("FlashLight");
-    flashLightEntity->AddComponent<Transform>();
-    flashLightEntity->AddComponent<CameraFollow>(&camera);
-    flashLightEntity->AddComponent<LightComponent>(LightType::Spot, glm::vec3(1.0f, 1.0f, 1.0f));
-    scene.push_back(std::move(flashLightEntity));
-
     std::vector<AdditionalLight> activeLights;
     activeLights.reserve(32);
-
-
 
     while (!glfwWindowShouldClose(window)) {
         float currentFrame = static_cast<float>(glfwGetTime());
@@ -277,27 +314,23 @@ int main() {
             }
         }
 
-        
+        glm::mat4 lightSpaceMatrix = CalculateLightSpaceMatrix(lightManager.mainLight);
+        RenderShadowPass(shadowShader, shadowFBO, scene, lightSpaceMatrix);
 
         myFBO.Bind();
-        glEnable(GL_DEPTH_TEST);
-        // glDisable(GL_CULL_FACE);
-        // Force Viewport to FBO texture size to prevent mismatch during window resize
-        glViewport(0, 0, SCR_WIDTH, SCR_HEIGHT); 
-        RenderScene(shader, camera, lightManager, scene, activeLights);
+        glViewport(0, 0, SCR_WIDTH, SCR_HEIGHT);
+        RenderScene(shader, camera, lightManager, scene, activeLights, lightSpaceMatrix, shadowFBO.GetDepthTexture());
 
         glm::mat4 skyboxView = glm::mat4(glm::mat3(camera.GetViewMatrix()));
-        glm::mat4 skyboxProjection = glm::perspective(
-            glm::radians(camera.Zoom),
-            static_cast<float>(SCR_WIDTH) / static_cast<float>(SCR_HEIGHT),
-            0.1f,
-            100.0f
-        );
+        glm::mat4 skyboxProjection = glm::perspective(glm::radians(camera.Zoom), static_cast<float>(SCR_WIDTH) / static_cast<float>(SCR_HEIGHT), 0.1f, 100.0f);
+        
         skyBoxShader.use();
         skyBoxShader.setMat4("view", glm::value_ptr(skyboxView));
         skyBoxShader.setMat4("projection", glm::value_ptr(skyboxProjection));
         skyBox.Draw(skyBoxShader);
+        
         myFBO.Unbind();
+
         glViewport(0, 0, framebufferWidth, framebufferHeight); 
         glDisable(GL_DEPTH_TEST); 
         glClearColor(1.0f, 1.0f, 1.0f, 1.0f); 
@@ -305,13 +338,10 @@ int main() {
 
         screenShader.use();
         glBindVertexArray(quadVAO);
-        
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, myFBO.GetColorTexture()); 
-        
         glDrawArrays(GL_TRIANGLES, 0, 6);
-        // glEnable(GL_CULL_FACE);
-
+        glEnable(GL_DEPTH_TEST);
 
         RenderUI(uiManager, lightManager, scene, isUIActive);
 

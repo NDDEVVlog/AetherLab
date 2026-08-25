@@ -10,6 +10,8 @@ struct URPLight {
 struct MainLightData {
     vec3 direction;
     vec3 color;
+    float intensity;
+    bool castShadows;
 };
 
 struct AdditionalLightData {
@@ -41,7 +43,7 @@ vec3 GetCameraPositionWS() {
 URPLight GetMainLight() {
     URPLight light;
     light.direction = normalize(-mainLight.direction);
-    light.color = mainLight.color;
+    light.color = mainLight.color * mainLight.intensity;
     light.distanceAttenuation = 1.0;
     light.shadowAttenuation = 1.0; 
     return light;
@@ -57,8 +59,6 @@ URPLight GetAdditionalLight(uint i, vec3 positionWS) {
 
     float attenuation = 1.0 / (data.constant + data.linear * distance + data.quadratic * (distance * distance));
 
-
-    // Spot Light
     if (data.type == 1) { 
         float theta = dot(light.direction, normalize(-data.direction));
         float epsilon = data.cutOff - data.outerCutOff;
