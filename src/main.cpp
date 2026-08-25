@@ -8,6 +8,8 @@
 
 #include "renderer/Shader.h"
 #include "renderer/Model.h"
+#include "renderer/Skybox.h"
+#include "renderer/FBO.h"
 #include "core/InputManager.hpp"
 #include "renderer/Camera.h"
 #include "Struct/Material.h"
@@ -55,8 +57,8 @@ GLFWwindow* InitializeWindow() {
 
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
-    glCullFace(GL_FRONT);  
-    
+    glCullFace(GL_BACK);  
+    glFrontFace(GL_CCW);
     return window;
 }
 
@@ -161,10 +163,59 @@ int main() {
     if (!window) return -1;
 
     Shader shader("shaders/cube.vert", "shaders/cube.frag");
-    Model myModel("assets/Models/Kenku/Birdbrain.fbx");
+    Shader skyBoxShader("shaders/skybox.vert","shaders/skybox.frag");
+
+
+    std::string skyBoxPath= "assets/SkyBox/";
+    Skybox skyBox(std::vector<std::string>{
+        skyBoxPath+"right.jpg",
+        skyBoxPath+"left.jpg",
+        skyBoxPath+"top.jpg",
+        skyBoxPath+"bottom.jpg",
+        skyBoxPath+"front.jpg",
+        skyBoxPath+"back.jpg",
+
+    });
+
+    Model myModel("assets/Corset.fbx");
     Texture myTexture;
     myTexture.load("assets/Models/Kenku/ColorNeat.png", "texture_diffuse", false);
     myModel.AddTexture(myTexture);
+
+
+    FBO myFBO(SCR_WIDTH, SCR_HEIGHT);
+    myFBO.AttachColorTexture();
+    myFBO.AttachDepthRenderBuffer();
+    if (!myFBO.CheckStatus()) {
+        std::cerr << "Failed to initialize FBO" << std::endl;
+    }
+
+    Shader screenShader("shaders/screen.vert", "shaders/screen.frag");
+    screenShader.use();
+    screenShader.setInt("screenTexture", 0);
+
+
+    float quadVertices[] = { 
+        -1.0f,  1.0f,  0.0f, 1.0f,
+        -1.0f, -1.0f,  0.0f, 0.0f,
+         1.0f, -1.0f,  1.0f, 0.0f,
+
+        -1.0f,  1.0f,  0.0f, 1.0f,
+         1.0f, -1.0f,  1.0f, 0.0f,
+         1.0f,  1.0f,  1.0f, 1.0f
+    };
+
+    unsigned int quadVAO, quadVBO;
+    glGenVertexArrays(1, &quadVAO);
+    glGenBuffers(1, &quadVBO);
+    glBindVertexArray(quadVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, quadVBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), &quadVertices, GL_STATIC_DRAW);
+    
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
 
     Camera camera(glm::vec3(0.0f, 0.0f, 5.0f));
     InputManager inputManager(window);
@@ -174,6 +225,8 @@ int main() {
     lightManager.mainLight.direction = glm::vec3(-0.2f, -1.0f, -0.3f);
     lightManager.mainLight.color = glm::vec3(0.5f, 0.5f, 0.5f);
     lightManager.ambientColor = glm::vec3(0.1f, 0.1f, 0.1f);
+
+    
 
     float deltaTime = 0.0f, lastFrame = 0.0f;
     bool isUIActive = false;
@@ -207,6 +260,8 @@ int main() {
     std::vector<AdditionalLight> activeLights;
     activeLights.reserve(32);
 
+
+
     while (!glfwWindowShouldClose(window)) {
         float currentFrame = static_cast<float>(glfwGetTime());
         deltaTime = currentFrame - lastFrame;
@@ -222,7 +277,42 @@ int main() {
             }
         }
 
+        
+
+        myFBO.Bind();
+        glEnable(GL_DEPTH_TEST);
+        // glDisable(GL_CULL_FACE);
+        // Force Viewport to FBO texture size to prevent mismatch during window resize
+        glViewport(0, 0, SCR_WIDTH, SCR_HEIGHT); 
         RenderScene(shader, camera, lightManager, scene, activeLights);
+
+        glm::mat4 skyboxView = glm::mat4(glm::mat3(camera.GetViewMatrix()));
+        glm::mat4 skyboxProjection = glm::perspective(
+            glm::radians(camera.Zoom),
+            static_cast<float>(SCR_WIDTH) / static_cast<float>(SCR_HEIGHT),
+            0.1f,
+            100.0f
+        );
+        skyBoxShader.use();
+        skyBoxShader.setMat4("view", glm::value_ptr(skyboxView));
+        skyBoxShader.setMat4("projection", glm::value_ptr(skyboxProjection));
+        skyBox.Draw(skyBoxShader);
+        myFBO.Unbind();
+        glViewport(0, 0, framebufferWidth, framebufferHeight); 
+        glDisable(GL_DEPTH_TEST); 
+        glClearColor(1.0f, 1.0f, 1.0f, 1.0f); 
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        screenShader.use();
+        glBindVertexArray(quadVAO);
+        
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, myFBO.GetColorTexture()); 
+        
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+        // glEnable(GL_CULL_FACE);
+
+
         RenderUI(uiManager, lightManager, scene, isUIActive);
 
         glfwSwapBuffers(window);
