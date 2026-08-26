@@ -16,11 +16,17 @@ struct MainLight {
     float intensity{1.0f};
     bool castShadows{true};
 
+        float shadowBiasMin{0.0005f};
+    float shadowBiasMax{0.005f};
+
     void ApplyToShader(const Shader& shader) const {
         shader.setVec3("mainLight.direction", direction);
         shader.setVec3("mainLight.color", color);
         shader.setFloat("mainLight.intensity", intensity);
         shader.setBool("mainLight.castShadows", castShadows);
+
+        shader.setFloat("mainLight.shadowBiasMin", shadowBiasMin);
+        shader.setFloat("mainLight.shadowBiasMax", shadowBiasMax);
     }
 };
 

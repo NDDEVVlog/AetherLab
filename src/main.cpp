@@ -33,6 +33,15 @@ const unsigned int SHADOW_HEIGHT = 2048;
 int framebufferWidth = SCR_WIDTH;
 int framebufferHeight = SCR_HEIGHT;
 
+struct OutlineSettings {
+    bool enable = true;
+    int outputMode = 0; 
+    glm::vec4 color = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f);
+    float thickness = 1.5f;
+    float normalThreshold = 0.5f;
+    float depthThreshold = 0.01f;
+};
+
 void FramebufferSizeCallback(GLFWwindow* window, int width, int height) {
     (void)window;
     framebufferWidth = width;
@@ -90,6 +99,38 @@ glm::mat4 CalculateLightSpaceMatrix(const MainLight& light) {
     glm::mat4 lightProjection = glm::ortho(-15.0f, 15.0f, -15.0f, 15.0f, 1.0f, 50.0f);
     glm::mat4 lightView = glm::lookAt(lightPos, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
     return lightProjection * lightView;
+}
+
+void RenderNormalPass(const Shader& normalShader, const FBO& normalFBO, Camera& camera, const std::vector<std::unique_ptr<Entity>>& scene) {
+    normalFBO.Bind();
+    glViewport(0, 0, SCR_WIDTH, SCR_HEIGHT);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    normalShader.use();
+    
+    float aspectRatio = static_cast<float>(SCR_WIDTH) / static_cast<float>(SCR_HEIGHT);
+    glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), aspectRatio, 0.1f, 100.0f);
+    glm::mat4 view = camera.GetViewMatrix();
+
+    normalShader.setMat4("projection", glm::value_ptr(projection));
+    normalShader.setMat4("view", glm::value_ptr(view));
+
+    for (const auto& entity : scene) {
+        if (!entity->IsActive()) continue;
+        auto renderer = entity->GetComponent<MeshRenderer>();
+        auto transform = entity->GetComponent<Transform>();
+        
+        if (renderer && renderer->model && transform) {
+            glm::mat4 modelMatrix = transform->GetModelMatrix();
+            glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(modelMatrix)));
+            
+            normalShader.setMat4("model", glm::value_ptr(modelMatrix));
+            normalShader.setMat3("normalMatrix", glm::value_ptr(normalMatrix));
+            renderer->model->Draw(normalShader);
+        }
+    }
+    normalFBO.Unbind();
 }
 
 void RenderShadowPass(const Shader& shadowShader, const FBO& shadowFBO, const std::vector<std::unique_ptr<Entity>>& scene, const glm::mat4& lightSpaceMatrix) {
@@ -161,15 +202,82 @@ void RenderScene(Shader& shader, Camera& camera, LightManager& lightManager, con
     }
 }
 
-void RenderUI(ImGuiManager& uiManager, LightManager& lightManager, const std::vector<std::unique_ptr<Entity>>& scene, bool isUIActive) {
+void RenderScreenPass(Shader& screenShader, unsigned int quadVAO, unsigned int colorTexture) {
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, framebufferWidth, framebufferHeight);
+    glDisable(GL_DEPTH_TEST);
+    glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    screenShader.use();
+    screenShader.setInt("screenTexture", 0);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, colorTexture);
+    
+    glBindVertexArray(quadVAO);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glEnable(GL_DEPTH_TEST);
+}
+
+void RenderOutlinePass(Shader& outlineShader, unsigned int quadVAO, const FBO& myFBO, const FBO& normalFBO, const OutlineSettings& settings) {
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, framebufferWidth, framebufferHeight);
+    glDisable(GL_DEPTH_TEST);
+    glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    outlineShader.use();
+    outlineShader.setInt("mainTexture", 0);
+    outlineShader.setInt("normalTexture", 1);
+    outlineShader.setInt("depthTexture", 2);
+    
+    outlineShader.setInt("outputMode", settings.outputMode);
+    outlineShader.setVec2("texelSize", glm::vec2(1.0f / static_cast<float>(framebufferWidth), 1.0f / static_cast<float>(framebufferHeight)));
+    
+    outlineShader.setFloat("outlineThickness", settings.thickness);
+    outlineShader.setFloat("normalThreshold", settings.normalThreshold);
+    outlineShader.setFloat("depthThreshold", settings.depthThreshold);
+    outlineShader.setVec4("outlineColor", settings.color);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, myFBO.GetColorTexture());
+
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, normalFBO.GetColorTexture());
+
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, myFBO.GetDepthTexture());
+
+    glBindVertexArray(quadVAO);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+    glEnable(GL_DEPTH_TEST);
+}
+
+void RenderUI(ImGuiManager& uiManager, LightManager& lightManager, const std::vector<std::unique_ptr<Entity>>& scene, bool isUIActive, OutlineSettings& outlineSettings) {
     uiManager.BeginFrame();
     
     if (isUIActive) {
         ImGui::Begin("Engine Control Panel");
         ImGui::Text("Press TAB to toggle camera/mouse mode");
         ImGui::Separator();
+
+        if (ImGui::CollapsingHeader("Post Processing", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Checkbox("Enable Outline Effect", &outlineSettings.enable);
+            
+            if (outlineSettings.enable) {
+                const char* modes[] = { "Final (Color + Outline)", "Outline Only", "View Normal", "View Depth" };
+                ImGui::Combo("Output Mode", &outlineSettings.outputMode, modes, IM_ARRAYSIZE(modes));
+                
+                if (outlineSettings.outputMode <= 1) {
+                    ImGui::ColorEdit4("Outline Color", glm::value_ptr(outlineSettings.color));
+                    ImGui::SliderFloat("Thickness", &outlineSettings.thickness, 0.0f, 5.0f);
+                    ImGui::SliderFloat("Normal Threshold", &outlineSettings.normalThreshold, 0.0f, 2.0f);
+                    ImGui::SliderFloat("Depth Threshold", &outlineSettings.depthThreshold, 0.0001f, 0.1f, "%.4f");
+                }
+            }
+        }
         
-        if (ImGui::CollapsingHeader("Global Lighting", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader("Global Lighting")) {
             ImGui::ColorEdit3("Ambient Color", glm::value_ptr(lightManager.ambientColor));
             ImGui::ColorEdit3("Main Light Color", glm::value_ptr(lightManager.mainLight.color));
             ImGui::SliderFloat3("Main Light Dir", glm::value_ptr(lightManager.mainLight.direction), -1.0f, 1.0f);
@@ -204,6 +312,8 @@ int main() {
     Shader skyBoxShader("shaders/skybox.vert","shaders/skybox.frag");
     Shader shadowShader("shaders/shadow.vert", "shaders/shadow.frag");
     Shader screenShader("shaders/screen.vert", "shaders/screen.frag");
+    Shader normalShader("shaders/normal_pass.vert","shaders/normal_pass.frag");
+    Shader outlineShader("shaders/screen.vert", "shaders/outline.frag");
 
     std::string skyBoxPath = "assets/SkyBox/";
     Skybox skyBox(std::vector<std::string>{
@@ -212,11 +322,13 @@ int main() {
         skyBoxPath + "front.jpg", skyBoxPath + "back.jpg"
     });
 
+    // 1. Tải Model Corset cũ
     Model myModel("assets/Corset.fbx");
     Texture myTexture;
     myTexture.load("assets/Models/Kenku/ColorNeat.png", "texture_diffuse", false);
     myModel.AddTexture(myTexture);
 
+    // 2. Tải Model Plane cũ
     Model planeModel("assets/Models/Plane.fbx");
     Texture planeColor;
     planeColor.load("assets/textures/Tile138/Tiles138_1K-JPG_Color.jpg", "texture_diffuse", false);
@@ -225,15 +337,27 @@ int main() {
     planeNormal.load("assets/textures/Tile138/Tiles138_1K-JPG_NormalGL.jpg", "texture_normal", false);
     planeModel.AddTexture(planeNormal);
 
+
+    Model lanternModel("assets/Models/LanternPole/SM_LanternPol.fbx"); 
+
+    Model duckModel("assets/Models/Duck/Duck.dae");
+    Texture duckTexture;
+    duckTexture.load("assets/Models/Duck/DuckCM.png","texture_diffuse",false);
+    duckModel.AddTexture(duckTexture);
+
     FBO shadowFBO(SHADOW_WIDTH, SHADOW_HEIGHT);
     shadowFBO.AttachDepthTexture();
+    shadowFBO.CheckStatus();
     
     FBO myFBO(SCR_WIDTH, SCR_HEIGHT);
     myFBO.AttachColorTexture();
-    myFBO.AttachDepthRenderBuffer();
+    myFBO.AttachDepthTexture();
+    myFBO.CheckStatus();
 
-    screenShader.use();
-    screenShader.setInt("screenTexture", 0);
+    FBO normalFBO(SCR_WIDTH, SCR_HEIGHT);
+    normalFBO.AttachColorTexture(GL_RGB16F, GL_RGB, GL_FLOAT);
+    normalFBO.AttachDepthRenderBuffer();
+    normalFBO.CheckStatus();
 
     float quadVertices[] = { 
         -1.0f,  1.0f,  0.0f, 1.0f,
@@ -260,6 +384,7 @@ int main() {
     InputManager inputManager(window);
     ImGuiManager uiManager(window);
     LightManager lightManager;
+    OutlineSettings outlineSettings;
     
     lightManager.mainLight.direction = glm::vec3(-0.2f, -1.0f, -0.3f);
     lightManager.mainLight.color = glm::vec3(1.0f, 1.0f, 1.0f);
@@ -272,6 +397,7 @@ int main() {
 
     std::vector<std::unique_ptr<Entity>> scene;
 
+    // --- SETUP ENTITIES ---
     auto corsetEntity = std::make_unique<Entity>("Corset");
     corsetEntity->AddComponent<Transform>()->position = glm::vec3(0.0f, 0.0f, 0.0f);
     corsetEntity->AddComponent<MeshRenderer>(&myModel);
@@ -285,16 +411,55 @@ int main() {
     planeEntity->AddComponent<MeshRenderer>(&planeModel);
     scene.push_back(std::move(planeEntity));
 
+    auto lanternEntity = std::make_unique<Entity>("LanternPole");
+    auto lanternTransform = lanternEntity->AddComponent<Transform>();
+    lanternTransform->position = glm::vec3(-4.0f, -1.0f, -2.0f); 
+    lanternTransform->scale = glm::vec3(1.0f); 
+    lanternEntity->AddComponent<MeshRenderer>(&lanternModel);
+    scene.push_back(std::move(lanternEntity));
+
+  
+    auto avocadoEntity = std::make_unique<Entity>("Pawn");
+    auto avocadoTransform = avocadoEntity->AddComponent<Transform>();
+    avocadoTransform->position = glm::vec3(3.0f, -0.5f, 1.0f); 
+    avocadoTransform->scale = glm::vec3(0.01f); 
+    avocadoEntity->AddComponent<MeshRenderer>(&duckModel);
+    scene.push_back(std::move(avocadoEntity));
+
+
+
     auto staticLightEntity = std::make_unique<Entity>("StaticLight");
     staticLightEntity->AddComponent<Transform>()->position = glm::vec3(0.0f, 2.0f, 2.0f);
     staticLightEntity->AddComponent<LightComponent>(LightType::Point, glm::vec3(1.0f, 0.5f, 0.2f));
     scene.push_back(std::move(staticLightEntity));
+
 
     auto rotatingLightEntity = std::make_unique<Entity>("RotatingLight");
     rotatingLightEntity->AddComponent<Transform>()->position = glm::vec3(4.0f, 1.0f, 0.0f); 
     rotatingLightEntity->AddComponent<RotateAround>(glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f, 5.0f, 0.0f), 90.0f);
     rotatingLightEntity->AddComponent<LightComponent>(LightType::Point, glm::vec3(0.2f, 0.5f, 1.0f));
     scene.push_back(std::move(rotatingLightEntity));
+
+
+    auto lanternLight = std::make_unique<Entity>("LanternLight");
+    lanternLight->AddComponent<Transform>()->position = glm::vec3(-4.0f, 2.5f, -1.5f); // Đặt hơi cao lên cho giống bóng đèn
+    lanternLight->AddComponent<LightComponent>(LightType::Point, glm::vec3(1.0f, 0.6f, 0.1f));
+    scene.push_back(std::move(lanternLight));
+
+ 
+    auto avocadoLight = std::make_unique<Entity>("AvocadoLight");
+    avocadoLight->AddComponent<Transform>()->position = glm::vec3(3.5f, 1.0f, 1.5f);
+    avocadoLight->AddComponent<LightComponent>(LightType::Point, glm::vec3(0.3f, 1.0f, 0.3f));
+    scene.push_back(std::move(avocadoLight));
+
+    // ĐÈN MỚI 3: Một đèn xoay màu Tím bay vòng quanh toàn bộ Scene
+    auto extraOrbitLight = std::make_unique<Entity>("ExtraOrbitLight");
+    extraOrbitLight->AddComponent<Transform>()->position = glm::vec3(0.0f, 1.5f, 0.0f);
+    // Bán kính xoay rộng (7.0f), xoay ngược chiều (-45 độ/s)
+    extraOrbitLight->AddComponent<RotateAround>(glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f, 7.0f, 0.0f), -45.0f); 
+    extraOrbitLight->AddComponent<LightComponent>(LightType::Point, glm::vec3(0.8f, 0.2f, 1.0f));
+    scene.push_back(std::move(extraOrbitLight));
+
 
     std::vector<AdditionalLight> activeLights;
     activeLights.reserve(32);
@@ -317,13 +482,16 @@ int main() {
         glm::mat4 lightSpaceMatrix = CalculateLightSpaceMatrix(lightManager.mainLight);
         RenderShadowPass(shadowShader, shadowFBO, scene, lightSpaceMatrix);
 
+        if (outlineSettings.enable) {
+            RenderNormalPass(normalShader, normalFBO, camera, scene);
+        }
+
         myFBO.Bind();
         glViewport(0, 0, SCR_WIDTH, SCR_HEIGHT);
         RenderScene(shader, camera, lightManager, scene, activeLights, lightSpaceMatrix, shadowFBO.GetDepthTexture());
 
         glm::mat4 skyboxView = glm::mat4(glm::mat3(camera.GetViewMatrix()));
         glm::mat4 skyboxProjection = glm::perspective(glm::radians(camera.Zoom), static_cast<float>(SCR_WIDTH) / static_cast<float>(SCR_HEIGHT), 0.1f, 100.0f);
-        
         skyBoxShader.use();
         skyBoxShader.setMat4("view", glm::value_ptr(skyboxView));
         skyBoxShader.setMat4("projection", glm::value_ptr(skyboxProjection));
@@ -331,19 +499,13 @@ int main() {
         
         myFBO.Unbind();
 
-        glViewport(0, 0, framebufferWidth, framebufferHeight); 
-        glDisable(GL_DEPTH_TEST); 
-        glClearColor(1.0f, 1.0f, 1.0f, 1.0f); 
-        glClear(GL_COLOR_BUFFER_BIT);
+        if (outlineSettings.enable) {
+            RenderOutlinePass(outlineShader, quadVAO, myFBO, normalFBO, outlineSettings);
+        } else {
+            RenderScreenPass(screenShader, quadVAO, myFBO.GetColorTexture());
+        }
 
-        screenShader.use();
-        glBindVertexArray(quadVAO);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, myFBO.GetColorTexture()); 
-        glDrawArrays(GL_TRIANGLES, 0, 6);
-        glEnable(GL_DEPTH_TEST);
-
-        RenderUI(uiManager, lightManager, scene, isUIActive);
+        RenderUI(uiManager, lightManager, scene, isUIActive, outlineSettings);
 
         glfwSwapBuffers(window);
         glfwPollEvents();

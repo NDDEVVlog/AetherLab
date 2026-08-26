@@ -3,6 +3,7 @@
 #include <glad/glad.h>
 #include <iostream>
 #include <vector>
+#include <stdexcept>
 
 class FBO {
 private:
@@ -30,49 +31,31 @@ public:
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }
 
-    void AttachColorTexture() {
+    void AttachColorTexture(GLint internalFormat = GL_RGB, GLenum format = GL_RGB, GLenum type = GL_UNSIGNED_BYTE) {
         Bind();
         unsigned int textureID;
         glGenTextures(1, &textureID);
         glBindTexture(GL_TEXTURE_2D, textureID);
         
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
+        glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, type, nullptr);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         
         int attachmentIndex = GL_COLOR_ATTACHMENT0 + static_cast<int>(colorTextures.size());
         glFramebufferTexture2D(GL_FRAMEBUFFER, attachmentIndex, GL_TEXTURE_2D, textureID, 0);
         
         colorTextures.push_back(textureID);
+        
+        std::vector<unsigned int> attachments;
+        for (size_t i = 0; i < colorTextures.size(); ++i) {
+            attachments.push_back(GL_COLOR_ATTACHMENT0 + static_cast<unsigned int>(i));
+        }
+        glDrawBuffers(static_cast<GLsizei>(attachments.size()), attachments.data());
+        
         Unbind();
     }
-    // void AttachColorAndNormalTextures() {
-    //     Bind();
-        
-    //     
-    //     unsigned int colorTex;
-    //     glGenTextures(1, &colorTex);
-    //     glBindTexture(GL_TEXTURE_2D, colorTex);
-    //     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
-    //     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorTex, 0);
-        
-    //     
-    //     unsigned int normalTex;
-    //     glGenTextures(1, &normalTex);
-    //     glBindTexture(GL_TEXTURE_2D, normalTex);
-    //     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_FLOAT, nullptr);
-    //     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, normalTex, 0);
-
-    //     
-    //     unsigned int attachments[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
-    //     glDrawBuffers(2, attachments); 
-
-    //     // Lưu lại ID để sau này dùng
-    //     colorTextures.push_back(colorTex);   // Index 0: Color
-    //     colorTextures.push_back(normalTex);  // Index 1: Normals
-    
-    //     Unbind();
-    // }
 
     void AttachDepthRenderBuffer() {
         Bind();
@@ -98,17 +81,19 @@ public:
         glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
         
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthTexture, 0);
-        glDrawBuffer(GL_NONE);
-        glReadBuffer(GL_NONE);
+        
+        if (colorTextures.empty()) {
+            glDrawBuffer(GL_NONE);
+            glReadBuffer(GL_NONE);
+        }
+
         Unbind();
     }
 
     bool CheckStatus() const {
         Bind();
         bool isComplete = (glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE);
-        if (!isComplete) {
-            std::cout << "FBO Incomplete!" << std::endl;
-        }
+        if (!isComplete) throw std::runtime_error("Framebuffer Incomplete!");
         Unbind();
         return isComplete;
     }
@@ -132,7 +117,6 @@ public:
         }
     }
 
-    [[nodiscard]] unsigned int GetID() const { return fboID; }
-    [[nodiscard]] unsigned int GetColorTexture(size_t index = 0) const { return colorTextures[index]; }
+    [[nodiscard]] unsigned int GetColorTexture(size_t index = 0) const { return colorTextures.at(index); }
     [[nodiscard]] unsigned int GetDepthTexture() const { return depthTexture; }
 };
