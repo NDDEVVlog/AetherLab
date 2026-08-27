@@ -34,7 +34,7 @@ int framebufferWidth = SCR_WIDTH;
 int framebufferHeight = SCR_HEIGHT;
 
 struct OutlineSettings {
-    bool enable = true;
+    bool enable = false;
     int outputMode = 0; 
     glm::vec4 color = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f);
     float thickness = 1.5f;
@@ -322,13 +322,13 @@ int main() {
         skyBoxPath + "front.jpg", skyBoxPath + "back.jpg"
     });
 
-    // 1. Tải Model Corset cũ
+
     Model myModel("assets/Corset.fbx");
     Texture myTexture;
     myTexture.load("assets/Models/Kenku/ColorNeat.png", "texture_diffuse", false);
     myModel.AddTexture(myTexture);
 
-    // 2. Tải Model Plane cũ
+ 
     Model planeModel("assets/Models/Plane.fbx");
     Texture planeColor;
     planeColor.load("assets/textures/Tile138/Tiles138_1K-JPG_Color.jpg", "texture_diffuse", false);
@@ -338,7 +338,10 @@ int main() {
     planeModel.AddTexture(planeNormal);
 
 
-    Model lanternModel("assets/Models/LanternPole/SM_LanternPol.fbx"); 
+    Model Monster("assets/Models/Monster/Monster.dae"); 
+    Texture monsterTexture;
+    monsterTexture.load("assets/Models/Monster/Monster.jpg","texture_diffuse",false); 
+    Monster.AddTexture(monsterTexture);
 
     Model duckModel("assets/Models/Duck/Duck.dae");
     Texture duckTexture;
@@ -359,6 +362,8 @@ int main() {
     normalFBO.AttachDepthRenderBuffer();
     normalFBO.CheckStatus();
 
+
+    //Use for post processing
     float quadVertices[] = { 
         -1.0f,  1.0f,  0.0f, 1.0f,
         -1.0f, -1.0f,  0.0f, 0.0f,
@@ -368,17 +373,16 @@ int main() {
          1.0f,  1.0f,  1.0f, 1.0f
     };
 
-    unsigned int quadVAO, quadVBO;
-    glGenVertexArrays(1, &quadVAO);
-    glGenBuffers(1, &quadVBO);
-    glBindVertexArray(quadVAO);
-    glBindBuffer(GL_ARRAY_BUFFER, quadVBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), &quadVertices, GL_STATIC_DRAW);
-    
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+    VAO screenVAO;
+    screenVAO.Bind();
+    VBO screenVBO(quadVertices, sizeof(quadVertices));
+
+    screenVAO.LinkAttribute(screenVBO, 0, 2, GL_FLOAT, 4 * sizeof(float), (void*)0);
+    screenVAO.LinkAttribute(screenVBO, 1, 2, GL_FLOAT, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+
+
+    screenVAO.Unbind();
+    screenVBO.Unbind();
 
     Camera camera(glm::vec3(0.0f, 0.0f, 5.0f));
     InputManager inputManager(window);
@@ -411,20 +415,21 @@ int main() {
     planeEntity->AddComponent<MeshRenderer>(&planeModel);
     scene.push_back(std::move(planeEntity));
 
-    auto lanternEntity = std::make_unique<Entity>("LanternPole");
-    auto lanternTransform = lanternEntity->AddComponent<Transform>();
-    lanternTransform->position = glm::vec3(-4.0f, -1.0f, -2.0f); 
-    lanternTransform->scale = glm::vec3(1.0f); 
-    lanternEntity->AddComponent<MeshRenderer>(&lanternModel);
-    scene.push_back(std::move(lanternEntity));
+    auto monsterEntity = std::make_unique<Entity>("Monster");
+    auto lanternTransform = monsterEntity->AddComponent<Transform>();
+    lanternTransform->position = glm::vec3(-4.0f, -0.8f, 3.5f); 
+    lanternTransform->rotation = glm::vec3(-90.0f,118.0f,0.0f);
+    lanternTransform->scale = glm::vec3(0.1f); 
+    monsterEntity->AddComponent<MeshRenderer>(&Monster);
+    scene.push_back(std::move(monsterEntity));
 
   
-    auto avocadoEntity = std::make_unique<Entity>("Pawn");
-    auto avocadoTransform = avocadoEntity->AddComponent<Transform>();
-    avocadoTransform->position = glm::vec3(3.0f, -0.5f, 1.0f); 
-    avocadoTransform->scale = glm::vec3(0.01f); 
-    avocadoEntity->AddComponent<MeshRenderer>(&duckModel);
-    scene.push_back(std::move(avocadoEntity));
+    auto duckEntity = std::make_unique<Entity>("Duck");
+    auto duckTransform = duckEntity->AddComponent<Transform>();
+    duckTransform->position = glm::vec3(3.0f, -0.5f, 1.0f); 
+    duckTransform->scale = glm::vec3(0.01f); 
+    duckEntity->AddComponent<MeshRenderer>(&duckModel);
+    scene.push_back(std::move(duckEntity));
 
 
 
@@ -452,10 +457,10 @@ int main() {
     avocadoLight->AddComponent<LightComponent>(LightType::Point, glm::vec3(0.3f, 1.0f, 0.3f));
     scene.push_back(std::move(avocadoLight));
 
-    // ĐÈN MỚI 3: Một đèn xoay màu Tím bay vòng quanh toàn bộ Scene
+
     auto extraOrbitLight = std::make_unique<Entity>("ExtraOrbitLight");
     extraOrbitLight->AddComponent<Transform>()->position = glm::vec3(0.0f, 1.5f, 0.0f);
-    // Bán kính xoay rộng (7.0f), xoay ngược chiều (-45 độ/s)
+
     extraOrbitLight->AddComponent<RotateAround>(glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f, 7.0f, 0.0f), -45.0f); 
     extraOrbitLight->AddComponent<LightComponent>(LightType::Point, glm::vec3(0.8f, 0.2f, 1.0f));
     scene.push_back(std::move(extraOrbitLight));
@@ -490,6 +495,8 @@ int main() {
         glViewport(0, 0, SCR_WIDTH, SCR_HEIGHT);
         RenderScene(shader, camera, lightManager, scene, activeLights, lightSpaceMatrix, shadowFBO.GetDepthTexture());
 
+
+        //SKyybox
         glm::mat4 skyboxView = glm::mat4(glm::mat3(camera.GetViewMatrix()));
         glm::mat4 skyboxProjection = glm::perspective(glm::radians(camera.Zoom), static_cast<float>(SCR_WIDTH) / static_cast<float>(SCR_HEIGHT), 0.1f, 100.0f);
         skyBoxShader.use();
@@ -500,9 +507,9 @@ int main() {
         myFBO.Unbind();
 
         if (outlineSettings.enable) {
-            RenderOutlinePass(outlineShader, quadVAO, myFBO, normalFBO, outlineSettings);
+            RenderOutlinePass(outlineShader, screenVAO.ID, myFBO, normalFBO, outlineSettings);
         } else {
-            RenderScreenPass(screenShader, quadVAO, myFBO.GetColorTexture());
+            RenderScreenPass(screenShader, screenVAO.ID, myFBO.GetColorTexture());
         }
 
         RenderUI(uiManager, lightManager, scene, isUIActive, outlineSettings);
